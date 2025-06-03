@@ -1,41 +1,42 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-import os
 import logging
-from handlers.message_handler import handle_message
+from app.config import settings
+from app.handlers.message_handler import handle_message
+from app.database import database
 
-# ✅ Load environment variables from .env file
 load_dotenv()
 
-# ✅ Get bot token securely
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN must be set in environment variables.")
-
-# ✅ Initialize FastAPI app
 app = FastAPI()
 
-# ✅ Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("telegram-webhook")
 
-# ✅ Health check endpoint
+@app.on_event("startup")
+async def startup():
+    await database.connect()
+    logger.info("Database connected")
+
+@app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()
+    logger.info("Database disconnected")
+
 @app.get("/")
 async def health_check():
     return {"status": "ok", "message": "Webhook server is live."}
 
-# ✅ Webhook handler
 @app.post("/")
 async def webhook_handler(request: Request):
     try:
         update = await request.json()
         logger.info(f"📩 Update received: {update}")
 
-        await handle_message(update, BOT_TOKEN)
+        await handle_message(update, settings.BOT_TOKEN)
         return JSONResponse(content={"ok": True})
 
     except Exception as e:
