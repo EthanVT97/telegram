@@ -1,21 +1,27 @@
 import logging
 import httpx
+import sqlalchemy
 from app.database import database, users
 from app.utils import build_message_payload
 
 logger = logging.getLogger("telegram-webhook")
 
+
 async def track_user(update: dict):
+    """Track and upsert user data in Supabase (via SQLAlchemy)."""
     if "message" not in update:
         return
+
     msg = update["message"]
     chat = msg.get("chat", {})
     chat_id = chat.get("id")
+
     if not chat_id:
         return
 
     query = users.select().where(users.c.chat_id == chat_id)
     user = await database.fetch_one(query)
+
     user_data = {
         "chat_id": chat_id,
         "first_name": msg.get("from", {}).get("first_name"),
@@ -25,31 +31,39 @@ async def track_user(update: dict):
     }
 
     if user:
-        update_query = users.update().where(users.c.chat_id == chat_id).values(
-            message_count=user["message_count"] + 1,
-            **user_data,
-            updated_at=sqlalchemy.func.now()
+        update_query = (
+            users.update()
+            .where(users.c.chat_id == chat_id)
+            .values(
+                message_count=user["message_count"] + 1,
+                **user_data,
+                updated_at=sqlalchemy.func.now()
+            )
         )
         await database.execute(update_query)
+        logger.info(f"🔄 Updated user {chat_id}")
     else:
         insert_query = users.insert().values(
             **user_data,
             message_count=1,
         )
         await database.execute(insert_query)
-    logger.info(f"Tracked user {chat_id}")
+        logger.info(f"➕ Tracked new user {chat_id}")
+
 
 async def handle_message(update: dict, bot_token: str):
-    await track_user(update)
-    
+    """Handle incoming Telegram messages."""
     if "message" not in update:
-        logger.warning("⛔ No message field found")
+        logger.warning("⛔ No 'message' found in update.")
         return
-    
+
+    await track_user(update)
+
     message = update["message"]
     chat_id = message["chat"]["id"]
     text = message.get("text", "")
 
+    # Basic command processing
     if text.startswith("/start"):
         reply_text = "👋 Welcome! I'm your assistant bot."
     elif text.startswith("/help"):
